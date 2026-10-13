@@ -1,4 +1,5 @@
 from flask import Flask, request
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -10,6 +11,7 @@ lots = [
     {"lot_id": "LOT001", "product": "A100", "station": "Litho", "status": "running"},
     {"lot_id": "LOT002", "product": "B200", "station": "Etch", "status": "waiting"},
 ]
+history = []
 
 @app.route("/")
 def home():
@@ -52,6 +54,7 @@ def create_lot():
     lots.append(new_lot)
     return new_lot, 201
 # 移到下一站
+# 移到下一站
 @app.route("/lots/<lot_id>/move", methods=["POST"])
 def move_lot(lot_id):
     for lot in lots:
@@ -61,7 +64,15 @@ def move_lot(lot_id):
             if lot["station"] == "Done":
                 return {"error": "Lot already completed"}, 400
 
+            old_station = lot["station"]
             lot["station"] = STATIONS[current_index + 1]
+
+            history.append({
+                "lot_id": lot["lot_id"],
+                "from_station": old_station,
+                "to_station": lot["station"],
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            })
 
             if lot["station"] == "Done":
                 lot["status"] = "completed"
@@ -71,6 +82,12 @@ def move_lot(lot_id):
             return lot
 
     return {"error": "Lot not found"}, 404
+
+# 查詢批次的移動歷史
+@app.route("/lots/<lot_id>/history")
+def get_history(lot_id):
+    records = [h for h in history if h["lot_id"] == lot_id]
+    return records
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False)
