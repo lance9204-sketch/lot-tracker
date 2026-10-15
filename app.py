@@ -14,7 +14,7 @@ def get_db():
 # 製程路線
 STATIONS = ["Start", "Litho", "Etch", "Deposition", "CMP", "Done"]
 
-# 暫存資料（新增、移動 API 還在用，之後會刪掉）
+# 暫存資料（移動 API 還在用，之後會刪掉）
 lots = [
     {"lot_id": "LOT001", "product": "A100", "station": "Litho", "status": "running"},
     {"lot_id": "LOT002", "product": "B200", "station": "Etch", "status": "waiting"},
@@ -45,7 +45,7 @@ def get_lot(lot_id):
         return {"error": "Lot not found"}, 404
     return dict(row)
 
-# 新增批次
+# 新增批次（資料庫版）
 @app.route("/lots", methods=["POST"])
 def create_lot():
     data = request.get_json(silent=True)
@@ -53,13 +53,21 @@ def create_lot():
     if not data:
         data = {}
 
+    conn = get_db()
+
+    # 沒給 lot_id 就自動產生：找出資料庫裡最大號 + 1
     if "lot_id" not in data:
-        max_num = max((int(lot["lot_id"][3:]) for lot in lots), default=0)
+        rows = conn.execute("SELECT lot_id FROM lots").fetchall()
+        max_num = max((int(r["lot_id"][3:]) for r in rows), default=0)
         data["lot_id"] = f"LOT{max_num + 1:03d}"
 
-    for lot in lots:
-        if lot["lot_id"] == data["lot_id"]:
-            return {"error": "Lot already exists"}, 400
+    # 檢查是否重複
+    existing = conn.execute(
+        "SELECT 1 FROM lots WHERE lot_id = ?", (data["lot_id"],)
+    ).fetchone()
+    if existing:
+        conn.close()
+        return {"error": "Lot already exists"}, 400
 
     new_lot = {
         "lot_id": data["lot_id"],
@@ -67,10 +75,15 @@ def create_lot():
         "station": "Start",
         "status": "waiting",
     }
-    lots.append(new_lot)
+    conn.execute(
+        "INSERT INTO lots (lot_id, product, station, status) VALUES (?, ?, ?, ?)",
+        (new_lot["lot_id"], new_lot["product"], new_lot["station"], new_lot["status"]),
+    )
+    conn.commit()
+    conn.close()
     return new_lot, 201
 
-# 移到下一站
+# 移到下一站（還在用 list，步驟 3 會改）
 @app.route("/lots/<lot_id>/move", methods=["POST"])
 def move_lot(lot_id):
     for lot in lots:
@@ -99,7 +112,7 @@ def move_lot(lot_id):
 
     return {"error": "Lot not found"}, 404
 
-# 查詢批次移動歷史
+# 查詢批次移動歷史（還在用 list，步驟 3 會改）
 @app.route("/lots/<lot_id>/history")
 def get_history(lot_id):
     records = [h for h in history if h["lot_id"] == lot_id]
