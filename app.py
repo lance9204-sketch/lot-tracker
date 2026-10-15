@@ -1,12 +1,20 @@
 from flask import Flask, request
 from datetime import datetime
+import sqlite3
 
 app = Flask(__name__)
 
+DB_PATH = "lots.db"
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 # 製程路線
 STATIONS = ["Start", "Litho", "Etch", "Deposition", "CMP", "Done"]
-# 暫存的批次資料（之後會換成資料庫）
+
+# 暫存資料（新增、移動 API 還在用，之後會刪掉）
 lots = [
     {"lot_id": "LOT001", "product": "A100", "station": "Litho", "status": "running"},
     {"lot_id": "LOT002", "product": "B200", "station": "Etch", "status": "waiting"},
@@ -17,19 +25,27 @@ history = []
 def home():
     return {"message": "Lot Tracker is running"}
 
-# 查詢所有批次
+# 查詢所有批次（資料庫版）
 @app.route("/lots")
 def get_lots():
-    return lots
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM lots").fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
-# 查詢單一批次
+# 查詢單一批次（資料庫版）
 @app.route("/lots/<lot_id>")
 def get_lot(lot_id):
-    for lot in lots:
-        if lot["lot_id"] == lot_id:
-            return lot
-    return {"error": "Lot not found"}, 404
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM lots WHERE lot_id = ?", (lot_id,)
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return {"error": "Lot not found"}, 404
+    return dict(row)
 
+# 新增批次
 @app.route("/lots", methods=["POST"])
 def create_lot():
     data = request.get_json(silent=True)
@@ -53,7 +69,7 @@ def create_lot():
     }
     lots.append(new_lot)
     return new_lot, 201
-# 移到下一站
+
 # 移到下一站
 @app.route("/lots/<lot_id>/move", methods=["POST"])
 def move_lot(lot_id):
@@ -83,7 +99,7 @@ def move_lot(lot_id):
 
     return {"error": "Lot not found"}, 404
 
-# 查詢批次的移動歷史
+# 查詢批次移動歷史
 @app.route("/lots/<lot_id>/history")
 def get_history(lot_id):
     records = [h for h in history if h["lot_id"] == lot_id]
@@ -91,5 +107,3 @@ def get_history(lot_id):
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False)
-
-
