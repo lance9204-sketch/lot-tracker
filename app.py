@@ -14,18 +14,11 @@ def get_db():
 # 製程路線
 STATIONS = ["Start", "Litho", "Etch", "Deposition", "CMP", "Done"]
 
-# 暫存資料（移動 API 還在用，之後會刪掉）
-lots = [
-    {"lot_id": "LOT001", "product": "A100", "station": "Litho", "status": "running"},
-    {"lot_id": "LOT002", "product": "B200", "station": "Etch", "status": "waiting"},
-]
-history = []
-
 @app.route("/")
 def home():
     return {"message": "Lot Tracker is running"}
 
-# 查詢所有批次（資料庫版）
+# 查詢所有批次
 @app.route("/lots")
 def get_lots():
     conn = get_db()
@@ -33,7 +26,7 @@ def get_lots():
     conn.close()
     return [dict(row) for row in rows]
 
-# 查詢單一批次（資料庫版）
+# 查詢單一批次
 @app.route("/lots/<lot_id>")
 def get_lot(lot_id):
     conn = get_db()
@@ -45,7 +38,7 @@ def get_lot(lot_id):
         return {"error": "Lot not found"}, 404
     return dict(row)
 
-# 新增批次（資料庫版）
+# 新增批次
 @app.route("/lots", methods=["POST"])
 def create_lot():
     data = request.get_json(silent=True)
@@ -83,40 +76,59 @@ def create_lot():
     conn.close()
     return new_lot, 201
 
-# 移到下一站（還在用 list，步驟 3 會改）
+# 移到下一站
 @app.route("/lots/<lot_id>/move", methods=["POST"])
 def move_lot(lot_id):
-    for lot in lots:
-        if lot["lot_id"] == lot_id:
-            current_index = STATIONS.index(lot["station"])
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM lots WHERE lot_id = ?", (lot_id,)
+    ).fetchone()
 
-            if lot["station"] == "Done":
-                return {"error": "Lot already completed"}, 400
+    if row is None:
+        conn.close()
+        return {"error": "Lot not found"}, 404
 
-            old_station = lot["station"]
-            lot["station"] = STATIONS[current_index + 1]
+    lot = dict(row)
 
-            history.append({
-                "lot_id": lot["lot_id"],
-                "from_station": old_station,
-                "to_station": lot["station"],
-                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
+    if lot["station"] == "Done":
+        conn.close()
+        return {"error": "Lot already completed"}, 400
 
-            if lot["station"] == "Done":
-                lot["status"] = "completed"
-            else:
-                lot["status"] = "running"
+    old_station = lot["station"]
+    current_index = STATIONS.index(old_station)
+    new_station = STATIONS[current_index + 1]
+    new_status = "completed" if new_station == "Done" else "running"
 
-            return lot
+    # 更新批次位置
+    conn.execute(
+        "UPDATE lots SET station = ?, status = ? WHERE lot_id = ?",
+        (new_station, new_status, lot_id),
+    )
 
-    return {"error": "Lot not found"}, 404
+    # 寫入移動紀錄
+    conn.execute(
+        "INSERT INTO history (lot_id, from_station, to_station, time) VALUES (?, ?, ?, ?)",
+        (lot_id, old_station, new_station, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+    )
 
-# 查詢批次移動歷史（還在用 list，步驟 3 會改）
+    conn.commit()
+    conn.close()
+
+    lot["station"] = new_station
+    lot["status"] = new_status
+    return lot
+
+# 查詢批次移動歷史
 @app.route("/lots/<lot_id>/history")
 def get_history(lot_id):
-    records = [h for h in history if h["lot_id"] == lot_id]
-    return records
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT lot_id, from_station, to_station, time FROM history "
+        "WHERE lot_id = ? ORDER BY id",
+        (lot_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False)
